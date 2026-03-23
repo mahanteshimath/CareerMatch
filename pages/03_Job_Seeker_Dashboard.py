@@ -166,7 +166,7 @@ if user_id:
         params=[user_id],
     ).collect()
     for row in cv_rows:
-        parsed = _coerce_parsed_json(row.get("PARSED_JSON"))
+        parsed = _coerce_parsed_json(row["PARSED_JSON"])
         if parsed:
             label = f"{row['CV_FILE_PATH']} ({row['UPLOADED_AT']})"
             stored_cv_options.append((label, parsed, int(row["CV_ID"])))
