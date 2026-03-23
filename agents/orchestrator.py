@@ -11,12 +11,12 @@ from datetime import datetime, timedelta
 import streamlit as st
 from snowflake.snowpark import Session
 
-from config.settings import CORTEX_EMBED_MODEL
 from agents.cv_parser import parse_cv
-from agents.position_researcher import search_positions
 from agents.job_researcher import search_jobs
-from agents.sop_writer import generate_sop, generate_email
+from agents.position_researcher import search_positions
 from agents.skill_analyzer import analyze_skill_gap
+from agents.sop_writer import generate_email, generate_sop
+from config.settings import CORTEX_EMBED_MODEL
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def _get_api_key() -> str:
 
     Supports multiple key layouts to avoid runtime breakage across deployments.
     """
+
     def _normalize(value: object) -> str | None:
         if value is None:
             return None
@@ -38,10 +39,8 @@ def _get_api_key() -> str:
         api_keys = st.secrets.get("api_keys")
         if api_keys is not None:
             key = None
-            # Works for dict-like secret sections.
             if hasattr(api_keys, "get"):
                 key = api_keys.get("perplexity")
-            # Works for Streamlit section objects supporting index access.
             if not key:
                 try:
                     key = api_keys["perplexity"]
@@ -162,18 +161,14 @@ def orchestrate_position_search(
         try:
             data = json.loads(cached)
             if isinstance(data, list):
-                # Legacy cache shape: bare list. Treat empty list as stale cache.
                 if data:
                     return {"positions": data, "citations": []}
                 data = None
-            # Current cache shape: {"positions": [...], "citations": [...]}.
             if isinstance(data, dict) and "positions" in data:
                 positions = data.get("positions", [])
                 if isinstance(positions, list) and positions:
                     return data
-                # Empty cached positions should not block a fresh AI search.
                 data = None
-
             if data:
                 return data
         except json.JSONDecodeError:
@@ -186,51 +181,48 @@ def orchestrate_position_search(
         return {"error": str(e)}
 
     try:
-        result = search_positions(
-            api_key, cv_summary, position_type, continent, current_date
-        )
+        result = search_positions(api_key, cv_summary, position_type, continent, current_date)
     except Exception as e:
         return {"error": f"Unexpected error during position search: {e}"}
 
     if "error" in result:
         return result
 
-    # Store results in CM_POSITIONS table for vector matching
     for pos in result.get("positions", []):
         _upsert_position(session, pos)
 
-    # Avoid persisting empty payloads; they cause confusing UX on cache hits.
     if result.get("positions"):
         _store_cache(session, "position_researcher", cache_query, json.dumps(result))
     return result
 
 
-def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
+def orchestrate_job_search(
+    session: Session,
+    cv_data: dict,
+    custom_instructions: str = "",
+) -> dict:
     """Search for job listings, caching results.
 
     Returns:
         {"jobs": [...], "citations": [...]} on success, or {"error": str}.
     """
     cv_summary = _build_cv_summary(cv_data)
-    cache_query = cv_summary[:300]
+    instruction_text = custom_instructions.strip()[:500]
+    cache_query = f"{cv_summary[:300]}|{instruction_text}"
 
     cached = _check_cache(session, "job_researcher", cache_query)
     if cached:
         try:
             data = json.loads(cached)
             if isinstance(data, list):
-                # Legacy cache shape: bare list. Treat empty list as stale cache.
                 if data:
                     return {"jobs": data, "citations": []}
                 data = None
-            # Current cache shape: {"jobs": [...], "citations": [...]}.
             if isinstance(data, dict) and "jobs" in data:
                 jobs = data.get("jobs", [])
                 if isinstance(jobs, list) and jobs:
                     return data
-                # Empty cached jobs should not block a fresh AI search.
                 data = None
-
             if data:
                 return data
         except json.JSONDecodeError:
@@ -242,7 +234,11 @@ def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
         return {"error": str(e)}
 
     try:
-        result = search_jobs(api_key, cv_summary)
+        result = search_jobs(
+            api_key,
+            cv_summary,
+            custom_instructions=instruction_text,
+        )
     except Exception as e:
         return {"error": f"Unexpected error during job search: {e}"}
 
@@ -252,7 +248,6 @@ def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
     for job in result.get("jobs", []):
         _upsert_job(session, job)
 
-    # Avoid persisting empty payloads; they cause confusing UX on cache hits.
     if result.get("jobs"):
         _store_cache(session, "job_researcher", cache_query, json.dumps(result))
     return result
@@ -297,7 +292,11 @@ def orchestrate_email_generation(
         return {"error": str(e)}
 
     return generate_email(
-        api_key, cv_summary, position_title, university, professor_name
+        api_key,
+        cv_summary,
+        position_title,
+        university,
+        professor_name,
     )
 
 
@@ -319,7 +318,10 @@ def orchestrate_skill_analysis(
         return {"error": str(e)}
 
     return analyze_skill_gap(
-        api_key, candidate_skills, job_description, job_required_skills
+        api_key,
+        candidate_skills,
+        job_description,
+        job_required_skills,
     )
 
 
@@ -401,7 +403,6 @@ def _upsert_position(session: Session, pos: dict) -> None:
                 "error": str(exc),
             },
         )
-        # DB persistence should not block showing AI results in UI.
         return
 
 
@@ -451,5 +452,4 @@ def _upsert_job(session: Session, job: dict) -> None:
             "job_upsert_failed",
             extra={"title": title, "company": company, "error": str(exc)},
         )
-        # DB persistence should not block showing AI results in UI.
         return
