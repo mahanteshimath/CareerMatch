@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import streamlit as st
 
 from agents.orchestrator import orchestrate_position_search
@@ -12,17 +14,62 @@ from utils.ui_components import (
     footer,
     page_header,
     require_auth,
-    require_cv,
     require_snowflake_session,
     sidebar_user_info,
 )
 
+
+def _coerce_parsed_json(value: object) -> dict | None:
+    """Convert PARSED_JSON from Snowflake row into a Python dictionary."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
 page_header("Student Dashboard")
 user_info = require_auth()
 sidebar_user_info(user_info)
-cv_data = require_cv()
 
 session = require_snowflake_session()
+user_id = st.session_state.get("user_id")
+
+stored_cv_options: list[tuple[str, dict, int | None]] = []
+
+if user_id:
+    cv_rows = session.sql(
+        "SELECT CV_ID, CV_FILE_PATH, PARSED_JSON, UPLOADED_AT "
+        "FROM IITJ.MH.CM_CVS WHERE USER_ID = ? "
+        "ORDER BY UPLOADED_AT DESC",
+        params=[user_id],
+    ).collect()
+    for row in cv_rows:
+        parsed = _coerce_parsed_json(row.get("PARSED_JSON"))
+        if parsed:
+            label = f"{row['CV_FILE_PATH']} ({row['UPLOADED_AT']})"
+            stored_cv_options.append((label, parsed, int(row["CV_ID"])))
+
+cv_data = st.session_state.get("parsed_cv") if isinstance(st.session_state.get("parsed_cv"), dict) else None
+selected_cv_id = st.session_state.get("selected_cv_id")
+
+if cv_data:
+    stored_cv_options.insert(0, ("Current session CV", cv_data, selected_cv_id))
+
+if stored_cv_options:
+    cv_labels = [item[0] for item in stored_cv_options]
+    selected_label = st.selectbox("CV source for position search", cv_labels, key="position_search_cv_source")
+    selected_entry = next(item for item in stored_cv_options if item[0] == selected_label)
+    cv_data = selected_entry[1]
+    selected_cv_id = selected_entry[2]
+    st.session_state["parsed_cv"] = cv_data
+    st.session_state["selected_cv_id"] = selected_cv_id
+else:
+    cv_data = None
+    st.warning("No parsed CV available. Upload and parse a CV once to reuse it for future searches.")
 
 # ── Filters ──────────────────────────────────────────────────────────────────
 st.markdown("### 🔎 Find University Positions")
@@ -49,6 +96,9 @@ with tab_ai:
         "Uses Perplexity Sonar to research live university positions matching your CV."
     )
     if st.button("🔍 Search Positions with AI", type="primary", key="ai_search"):
+        if not cv_data:
+            st.warning("Please upload/parse a CV first, or choose one from your stored CVs.")
+            st.stop()
         clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
         st.session_state.pop("ai_positions", None)
         st.session_state.pop("ai_positions_citations", None)
@@ -129,7 +179,10 @@ with tab_db:
         st.session_state.pop("db_position_matches", None)
         cv_text = st.session_state.get("cv_text", "")
         if not cv_text:
-            st.warning("CV text not found. Please re-upload your CV.")
+            st.warning(
+                "CV text not found in current session. Uploading again is not required for AI search, "
+                "but semantic match currently needs in-session CV text."
+            )
         else:
             with st.spinner("Computing semantic similarity..."):
                 filters = {

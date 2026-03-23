@@ -85,6 +85,14 @@ if uploaded_file:
                             "SELECT ?, ?, PARSE_JSON(?)",
                             params=[user_id, stage_path, json.dumps(parsed)],
                         ).collect()
+                        inserted = session.sql(
+                            "SELECT CV_ID FROM IITJ.MH.CM_CVS "
+                            "WHERE USER_ID = ? AND CV_FILE_PATH = ? "
+                            "ORDER BY UPLOADED_AT DESC LIMIT 1",
+                            params=[user_id, stage_path],
+                        ).collect()
+                        if inserted:
+                            st.session_state["selected_cv_id"] = int(inserted[0]["CV_ID"])
                     except Exception as e:
                         st.warning(f"CV parsed but failed to save: {e}")
                 elif user_id:
