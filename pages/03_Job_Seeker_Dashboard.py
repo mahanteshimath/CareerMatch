@@ -104,7 +104,7 @@ def _save_ai_jobs_to_snowflake(
                 "INSERT INTO IITJ.MH.CM_JOBS "
                 "(TITLE, COMPANY, LOCATION, DESCRIPTION, REQUIRED_SKILLS, "
                 "EXPERIENCE_LEVEL, SALARY_RANGE, SOURCE_URL, EMBEDDING) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, SNOWFLAKE.CORTEX.EMBED_TEXT_768(?, ?))",
+                "SELECT ?, ?, ?, ?, ?, ?, ?, ?, SNOWFLAKE.CORTEX.EMBED_TEXT_768(?, ?)",
                 params=[
                     title,
                     company,
