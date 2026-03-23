@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta
 
 import streamlit as st
@@ -17,8 +18,40 @@ from agents.skill_analyzer import analyze_skill_gap
 
 
 def _get_api_key() -> str:
-    """Retrieve Perplexity API key from Streamlit secrets."""
-    return st.secrets["api_keys"]["perplexity"]
+    """Retrieve Perplexity API key from Streamlit secrets or environment.
+
+    Supports multiple key layouts to avoid runtime breakage across deployments.
+    """
+    # Preferred nested layout: [api_keys] perplexity = "..."
+    try:
+        api_keys = st.secrets.get("api_keys", {})
+        if isinstance(api_keys, dict):
+            key = api_keys.get("perplexity")
+            if key:
+                return str(key)
+    except Exception:
+        pass
+
+    # Common flat secret names used in Streamlit apps.
+    for secret_name in ("PERPLEXITY_API_KEY", "perplexity_api_key", "perplexity"):
+        try:
+            value = st.secrets.get(secret_name)
+            if value:
+                return str(value)
+        except Exception:
+            continue
+
+    # Environment fallback for local/dev execution.
+    for env_name in ("PERPLEXITY_API_KEY", "PPLX_API_KEY", "PERPLEXITY_KEY"):
+        value = os.getenv(env_name)
+        if value:
+            return value
+
+    raise KeyError(
+        "Perplexity API key not found. Configure one of: "
+        "st.secrets['api_keys']['perplexity'], st.secrets['PERPLEXITY_API_KEY'], "
+        "or env PERPLEXITY_API_KEY."
+    )
 
 
 def _cache_key(agent_name: str, query: str) -> str:
@@ -131,7 +164,16 @@ def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
         except json.JSONDecodeError:
             pass
 
-    result = search_jobs(_get_api_key(), cv_summary)
+    try:
+        api_key = _get_api_key()
+    except KeyError as e:
+        return {"error": str(e)}
+
+    try:
+        result = search_jobs(api_key, cv_summary)
+    except Exception as e:
+        return {"error": f"Unexpected error during job search: {e}"}
+
     if "error" in result:
         return result
 
@@ -262,30 +304,34 @@ def _upsert_job(session: Session, job: dict) -> None:
     if not title or not company:
         return
 
-    existing = session.sql(
-        "SELECT JOB_ID FROM IITJ.MH.CM_JOBS WHERE TITLE = ? AND COMPANY = ?",
-        params=[title, company],
-    ).collect()
-    if existing:
+    try:
+        existing = session.sql(
+            "SELECT JOB_ID FROM IITJ.MH.CM_JOBS WHERE TITLE = ? AND COMPANY = ?",
+            params=[title, company],
+        ).collect()
+        if existing:
+            return
+
+        required_skills = job.get("required_skills", [])
+        if isinstance(required_skills, list):
+            required_skills = ", ".join(required_skills)
+
+        session.sql(
+            "INSERT INTO IITJ.MH.CM_JOBS "
+            "(TITLE, COMPANY, LOCATION, DESCRIPTION, REQUIRED_SKILLS, "
+            "EXPERIENCE_LEVEL, SALARY_RANGE, SOURCE_URL) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params=[
+                title,
+                company,
+                job.get("location", ""),
+                job.get("description", ""),
+                required_skills,
+                job.get("experience_level", ""),
+                job.get("salary_range", ""),
+                job.get("source_url", ""),
+            ],
+        ).collect()
+    except Exception:
+        # DB persistence should not block showing AI results in UI.
         return
-
-    required_skills = job.get("required_skills", [])
-    if isinstance(required_skills, list):
-        required_skills = ", ".join(required_skills)
-
-    session.sql(
-        "INSERT INTO IITJ.MH.CM_JOBS "
-        "(TITLE, COMPANY, LOCATION, DESCRIPTION, REQUIRED_SKILLS, "
-        "EXPERIENCE_LEVEL, SALARY_RANGE, SOURCE_URL) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        params=[
-            title,
-            company,
-            job.get("location", ""),
-            job.get("description", ""),
-            required_skills,
-            job.get("experience_level", ""),
-            job.get("salary_range", ""),
-            job.get("source_url", ""),
-        ],
-    ).collect()

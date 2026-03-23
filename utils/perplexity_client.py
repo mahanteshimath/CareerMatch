@@ -89,7 +89,8 @@ def parse_json_response(raw_content: str) -> dict | list | None:
     Returns parsed JSON or None if parsing fails.
     """
     content = raw_content.strip()
-    # Strip ```json or ``` fences
+
+    # Strip ```json or ``` fences.
     if content.startswith("```"):
         first_nl = content.find("\n")
         content = content[first_nl + 1:] if first_nl != -1 else content[3:]
@@ -97,7 +98,64 @@ def parse_json_response(raw_content: str) -> dict | list | None:
         content = content[:-3]
     content = content.strip()
 
+    # Fast path: content is already pure JSON.
     try:
         return json.loads(content)
     except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract the first balanced JSON object/array from mixed text.
+    extracted = _extract_balanced_json(content)
+    if extracted is None:
         return None
+
+    try:
+        return json.loads(extracted)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_balanced_json(text: str) -> str | None:
+    """Extract first balanced JSON object/array from free-form text."""
+    start = -1
+    opener = ""
+    for i, ch in enumerate(text):
+        if ch in "[{":
+            start = i
+            opener = ch
+            break
+
+    if start == -1:
+        return None
+
+    closer = "]" if opener == "[" else "}"
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape:
+            escape = False
+            continue
+
+        if ch == "\\":
+            escape = True
+            continue
+
+        if ch == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0 and ch == closer:
+                return text[start : i + 1]
+
+    return None

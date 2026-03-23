@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from utils.perplexity_client import call_perplexity, parse_json_response
 
 JOB_RESEARCHER_SYSTEM_PROMPT = """You are a job market research specialist.
@@ -26,6 +28,56 @@ Find at least 5-10 relevant positions. Prioritise roles that closely match
 the candidate's existing skills and experience level.
 Return ONLY the JSON array, no markdown or explanation."""
 
+JSON_REPAIR_SYSTEM_PROMPT = """You are a strict JSON formatter.
+Given raw model output, return ONLY valid JSON and nothing else."""
+
+
+def _normalize_jobs(data: Any) -> list[dict[str, Any]]:
+    """Normalize model output to a clean list of job dictionaries."""
+    if isinstance(data, list):
+        candidates = data
+    elif isinstance(data, dict):
+        jobs_value = data.get("jobs")
+        if isinstance(jobs_value, list):
+            candidates = jobs_value
+        elif isinstance(jobs_value, dict):
+            candidates = [jobs_value]
+        else:
+            candidates = [data]
+    else:
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+
+        required_skills = item.get("required_skills", [])
+        if isinstance(required_skills, str):
+            required_skills = [s.strip() for s in required_skills.split(",") if s.strip()]
+        elif not isinstance(required_skills, list):
+            required_skills = []
+
+        title = str(item.get("title", "")).strip()
+        company = str(item.get("company", "")).strip()
+        if not title or not company:
+            continue
+
+        normalized.append(
+            {
+                "title": title,
+                "company": company,
+                "location": str(item.get("location", "")).strip(),
+                "description": str(item.get("description", "")).strip(),
+                "required_skills": required_skills,
+                "experience_level": str(item.get("experience_level", "")).strip(),
+                "salary_range": str(item.get("salary_range", "")).strip(),
+                "source_url": str(item.get("source_url", "")).strip(),
+            }
+        )
+
+    return normalized
+
 
 def search_jobs(api_key: str, cv_summary: str) -> dict:
     """Search for job listings matching the candidate's profile.
@@ -44,7 +96,24 @@ def search_jobs(api_key: str, cv_summary: str) -> dict:
 
     parsed = parse_json_response(result["content"])
     if parsed is None:
-        return {"error": "Failed to parse job results: AI returned invalid JSON."}
+        # Retry once by asking the model to strictly reformat previous output as JSON.
+        repair = call_perplexity(
+            api_key,
+            JSON_REPAIR_SYSTEM_PROMPT,
+            "Convert the following content into a valid JSON array of job objects. "
+            "Return ONLY JSON.\n\n"
+            f"{result['content']}",
+        )
+        if "error" in repair:
+            return {
+                "error": "Failed to parse job results: AI returned invalid JSON and JSON repair failed."
+            }
+        parsed = parse_json_response(repair.get("content", ""))
+        if parsed is None:
+            return {"error": "Failed to parse job results: AI returned invalid JSON."}
 
-    jobs = parsed if isinstance(parsed, list) else parsed.get("jobs", [parsed])
+    jobs = _normalize_jobs(parsed)
+    if not jobs:
+        return {"error": "AI job search returned no valid job entries."}
+
     return {"jobs": jobs, "citations": result.get("citations", [])}
