@@ -1,4 +1,4 @@
-"""Shared Perplexity Sonar API client using requests (bypasses httpx/openai SSL issues)."""
+"""Shared Perplexity API client with response-shape normalization."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def call_perplexity(
     timeout: int = 90,
     max_retries: int = 2,
 ) -> dict[str, Any]:
-    """Call the Perplexity chat completions API.
+    """Call the Perplexity API.
 
     Args:
         api_key: Perplexity API key.
@@ -88,12 +88,9 @@ def call_perplexity(
 
             response.raise_for_status()
             result = response.json()
-
-            if "choices" in result and len(result["choices"]) > 0:
-                message = result["choices"][0]["message"]
-                content = message.get("content", "")
-                citations = result.get("citations", [])
-                return {"content": content, "citations": citations}
+            normalized = _normalize_perplexity_response(result)
+            if normalized is not None:
+                return normalized
 
             return {"error": f"Unexpected API response: {json.dumps(result)[:500]}"}
 
@@ -125,6 +122,75 @@ def _sleep_before_retry(attempt: int) -> None:
     """Backoff with bounded jitter for transient API failures."""
     delay_seconds = min(8.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.3))
     time.sleep(delay_seconds)
+
+
+def _normalize_perplexity_response(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize different Perplexity response shapes into a stable output schema."""
+    content = _extract_content(result)
+    if not content:
+        return None
+
+    citations = _extract_citations(result)
+    return {"content": content, "citations": citations}
+
+
+def _extract_content(result: dict[str, Any]) -> str:
+    """Extract model text from known response layouts."""
+    # Classic chat completions shape.
+    choices = result.get("choices")
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        content = message.get("content") if isinstance(message, dict) else ""
+
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text") or block.get("content")
+                    if isinstance(text, str) and text:
+                        parts.append(text)
+            if parts:
+                return "\n".join(parts)
+
+    # Agent-like / tool style shapes.
+    output_text = result.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        return output_text
+
+    answer = result.get("answer")
+    if isinstance(answer, str) and answer:
+        return answer
+
+    content = result.get("content")
+    if isinstance(content, str) and content:
+        return content
+
+    return ""
+
+
+def _extract_citations(result: dict[str, Any]) -> list[str]:
+    """Extract URLs from known citation/source fields."""
+    citations = result.get("citations", [])
+    if isinstance(citations, list):
+        normalized = [str(item) for item in citations if item]
+        if normalized:
+            return normalized
+
+    sources = result.get("sources")
+    if isinstance(sources, list):
+        urls: list[str] = []
+        for item in sources:
+            if isinstance(item, str):
+                urls.append(item)
+            elif isinstance(item, dict):
+                candidate = item.get("url") or item.get("source")
+                if candidate:
+                    urls.append(str(candidate))
+        return urls
+
+    return []
 
 
 def parse_json_response(raw_content: str) -> dict | list | None:

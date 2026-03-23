@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from utils.perplexity_client import call_perplexity, parse_json_response
+from utils.perplexity_client import (
+    call_perplexity,
+    parse_json_response,
+)
 
 
 class _FakeResponse:
@@ -70,3 +73,19 @@ def test_call_perplexity_retries_retryable_status(monkeypatch) -> None:
     result = call_perplexity("key", "sys", "user", timeout=1, max_retries=1)
     assert result["content"] == "after-retry"
     assert calls["count"] == 2
+
+
+def test_call_perplexity_normalizes_output_text_shape(monkeypatch) -> None:
+    def _fake_post(*args, **kwargs):
+        return _FakeResponse(
+            200,
+            payload={
+                "output_text": "agent-output",
+                "sources": [{"url": "https://example.org/doc"}],
+            },
+        )
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    result = call_perplexity("key", "sys", "user", timeout=1, max_retries=0)
+    assert result["content"] == "agent-output"
+    assert result["citations"] == ["https://example.org/doc"]

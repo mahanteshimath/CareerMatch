@@ -1,5 +1,7 @@
 """App configuration constants."""
 
+import os
+
 # Snowflake
 SNOWFLAKE_DATABASE = "iitj"
 SNOWFLAKE_SCHEMA = "mh"
@@ -15,8 +17,11 @@ APPLICATION_TYPES = ["Masters", "PhD", "Postdoc"]
 CONTINENTS = ["USA", "Europe/UK", "India", "Asia", "Australia", "Canada"]
 
 # Perplexity
-PERPLEXITY_MODEL = "sonar"
-PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar")
+PERPLEXITY_API_URL = os.getenv(
+	"PERPLEXITY_API_URL",
+	"https://api.perplexity.ai/chat/completions",
+)
 
 # Embedding
 CORTEX_EMBED_MODEL = "e5-base-v2"
