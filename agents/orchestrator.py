@@ -323,32 +323,36 @@ def _upsert_position(session: Session, pos: dict) -> None:
     if not title or not university:
         return
 
-    existing = session.sql(
-        "SELECT POS_ID FROM IITJ.MH.CM_POSITIONS WHERE TITLE = ? AND UNIVERSITY = ?",
-        params=[title, university],
-    ).collect()
-    if existing:
-        return
+    try:
+        existing = session.sql(
+            "SELECT POS_ID FROM IITJ.MH.CM_POSITIONS WHERE TITLE = ? AND UNIVERSITY = ?",
+            params=[title, university],
+        ).collect()
+        if existing:
+            return
 
-    session.sql(
-        "INSERT INTO IITJ.MH.CM_POSITIONS "
-        "(TITLE, UNIVERSITY, COUNTRY, CONTINENT, POSITION_TYPE, DEADLINE, "
-        "DESCRIPTION, REQUIREMENTS, PROFESSOR_NAME, PROFESSOR_EMAIL, SOURCE_URL) "
-        "VALUES (?, ?, ?, ?, ?, TRY_TO_DATE(?), ?, ?, ?, ?, ?)",
-        params=[
-            title,
-            university,
-            pos.get("country", ""),
-            pos.get("continent", ""),
-            pos.get("position_type", ""),
-            pos.get("deadline", ""),
-            pos.get("description", ""),
-            pos.get("requirements", ""),
-            pos.get("professor_name", ""),
-            pos.get("professor_email", ""),
-            pos.get("source_url", ""),
-        ],
-    ).collect()
+        session.sql(
+            "INSERT INTO IITJ.MH.CM_POSITIONS "
+            "(TITLE, UNIVERSITY, COUNTRY, CONTINENT, POSITION_TYPE, DEADLINE, "
+            "DESCRIPTION, REQUIREMENTS, PROFESSOR_NAME, PROFESSOR_EMAIL, SOURCE_URL) "
+            "VALUES (?, ?, ?, ?, ?, TRY_TO_DATE(?), ?, ?, ?, ?, ?)",
+            params=[
+                title,
+                university,
+                pos.get("country", ""),
+                pos.get("continent", ""),
+                pos.get("position_type", ""),
+                pos.get("deadline", ""),
+                pos.get("description", ""),
+                pos.get("requirements", ""),
+                pos.get("professor_name", ""),
+                pos.get("professor_email", ""),
+                pos.get("source_url", ""),
+            ],
+        ).collect()
+    except Exception:
+        # DB persistence should not block showing AI results in UI.
+        return
 
 
 def _upsert_job(session: Session, job: dict) -> None:
