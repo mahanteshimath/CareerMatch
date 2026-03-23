@@ -8,7 +8,7 @@ import streamlit as st
 
 from agents.orchestrator import orchestrate_cv_parsing
 from config.settings import ALLOWED_CV_EXTENSIONS, MAX_CV_SIZE_MB, PERSONA_STUDENT
-from utils.cv_utils import extract_text_from_pdf, stage_cv, validate_cv
+from utils.cv_utils import extract_text_from_cv, stage_cv, validate_cv
 from utils.ui_components import footer, page_header, require_auth, require_snowflake_session, sidebar_user_info
 
 page_header("Upload CV")
@@ -39,10 +39,14 @@ if uploaded_file:
 
     # Extract text
     with st.spinner("Extracting text from CV..."):
-        cv_text = extract_text_from_pdf(uploaded_file)
+        try:
+            cv_text = extract_text_from_cv(uploaded_file)
+        except ValueError as exc:
+            st.error(f"Failed to extract text: {exc}")
+            st.stop()
 
     if not cv_text.strip():
-        st.error("Could not extract text from the PDF. Please ensure it's not a scanned image.")
+        st.error("Could not extract text from the CV file. Please ensure it contains selectable text.")
         st.stop()
 
     st.session_state["cv_text"] = cv_text
@@ -52,11 +56,15 @@ if uploaded_file:
 
     # Stage file in Snowflake
     user_id = st.session_state.get("user_id")
+    stage_path = ""
     if user_id:
         with st.spinner("Staging CV in Snowflake..."):
             uploaded_file.seek(0)
-            stage_path = stage_cv(session, uploaded_file, user_id)
-            st.session_state["cv_stage_path"] = stage_path
+            try:
+                stage_path = stage_cv(session, uploaded_file, user_id)
+                st.session_state["cv_stage_path"] = stage_path
+            except RuntimeError as exc:
+                st.warning(f"CV text loaded, but cloud staging failed: {exc}")
 
     # AI Parsing
     st.divider()
@@ -70,7 +78,7 @@ if uploaded_file:
             else:
                 st.session_state["parsed_cv"] = parsed
                 # Store in Snowflake
-                if user_id:
+                if user_id and stage_path:
                     try:
                         session.sql(
                             "INSERT INTO IITJ.MH.CM_CVS (USER_ID, CV_FILE_PATH, PARSED_JSON) "
@@ -79,6 +87,8 @@ if uploaded_file:
                         ).collect()
                     except Exception as e:
                         st.warning(f"CV parsed but failed to save: {e}")
+                elif user_id:
+                    st.warning("CV parsed, but skipping DB save because file staging was unavailable.")
 
     # Display parsed results
     if st.session_state.get("parsed_cv"):

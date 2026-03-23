@@ -65,6 +65,16 @@ def clear_session() -> None:
     st.logout()
 
 
+def clear_session_prefixes(prefixes: tuple[str, ...]) -> None:
+    """Remove transient session keys that begin with any provided prefix."""
+    keys_to_clear = [
+        key for key in list(st.session_state.keys())
+        if any(key.startswith(prefix) for prefix in prefixes)
+    ]
+    for key in keys_to_clear:
+        st.session_state.pop(key, None)
+
+
 def sidebar_user_info(user_info: dict) -> None:
     """Display user info in the sidebar."""
     with st.sidebar:

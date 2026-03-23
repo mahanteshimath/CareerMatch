@@ -7,7 +7,15 @@ import streamlit as st
 from agents.orchestrator import orchestrate_position_search
 from config.settings import APPLICATION_TYPES, CONTINENTS
 from utils.matching import match_positions
-from utils.ui_components import footer, page_header, require_auth, require_cv, require_snowflake_session, sidebar_user_info
+from utils.ui_components import (
+    clear_session_prefixes,
+    footer,
+    page_header,
+    require_auth,
+    require_cv,
+    require_snowflake_session,
+    sidebar_user_info,
+)
 
 page_header("Student Dashboard")
 user_info = require_auth()
@@ -41,6 +49,9 @@ with tab_ai:
         "Uses Perplexity Sonar to research live university positions matching your CV."
     )
     if st.button("🔍 Search Positions with AI", type="primary", key="ai_search"):
+        clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
+        st.session_state.pop("ai_positions", None)
+        st.session_state.pop("ai_positions_citations", None)
         with st.spinner("AI is searching for positions... This may take 30-60 seconds."):
             result = orchestrate_position_search(
                 session, cv_data, position_type, continent
@@ -114,6 +125,8 @@ with tab_db:
         "Matches your CV against positions already stored in the database using vector similarity."
     )
     if st.button("📊 Run Semantic Match", key="db_match"):
+        clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
+        st.session_state.pop("db_position_matches", None)
         cv_text = st.session_state.get("cv_text", "")
         if not cv_text:
             st.warning("CV text not found. Please re-upload your CV.")
@@ -124,8 +137,11 @@ with tab_db:
                     "continent": continent,
                     "open_only": open_only,
                 }
-                matches = match_positions(session, cv_text, filters, top_k=10)
-                st.session_state["db_position_matches"] = matches
+                try:
+                    matches = match_positions(session, cv_text, filters, top_k=10)
+                    st.session_state["db_position_matches"] = matches
+                except Exception as exc:
+                    st.error(f"Semantic match failed: {exc}")
 
     if st.session_state.get("db_position_matches"):
         matches = st.session_state["db_position_matches"]

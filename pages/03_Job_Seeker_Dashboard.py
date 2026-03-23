@@ -6,7 +6,15 @@ import streamlit as st
 
 from agents.orchestrator import orchestrate_job_search, orchestrate_skill_analysis
 from utils.matching import match_jobs
-from utils.ui_components import footer, page_header, require_auth, require_cv, require_snowflake_session, sidebar_user_info
+from utils.ui_components import (
+    clear_session_prefixes,
+    footer,
+    page_header,
+    require_auth,
+    require_cv,
+    require_snowflake_session,
+    sidebar_user_info,
+)
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────
@@ -67,6 +75,9 @@ with tab_ai:
         "Uses Perplexity Sonar to research real job listings matching your profile."
     )
     if st.button("🔍 Search Jobs with AI", type="primary", key="ai_job_search"):
+        clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
+        st.session_state.pop("ai_jobs", None)
+        st.session_state.pop("ai_jobs_citations", None)
         with st.spinner("AI is searching the job market... This may take 30-60 seconds."):
             result = orchestrate_job_search(session, cv_data)
             if isinstance(result, dict) and "error" in result:
@@ -148,13 +159,18 @@ with tab_db:
         "Matches your CV against jobs already stored in the database using vector similarity."
     )
     if st.button("📊 Run Semantic Match", key="db_job_match"):
+        clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
+        st.session_state.pop("db_job_matches", None)
         cv_text = st.session_state.get("cv_text", "")
         if not cv_text:
             st.warning("CV text not found. Please re-upload your CV.")
         else:
             with st.spinner("Computing semantic similarity..."):
-                matches = match_jobs(session, cv_text, top_k=10)
-                st.session_state["db_job_matches"] = matches
+                try:
+                    matches = match_jobs(session, cv_text, top_k=10)
+                    st.session_state["db_job_matches"] = matches
+                except Exception as exc:
+                    st.error(f"Semantic match failed: {exc}")
 
     if st.session_state.get("db_job_matches"):
         matches = st.session_state["db_job_matches"]

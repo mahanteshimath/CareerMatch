@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from agents.orchestrator import validate_perplexity_key
 from config.settings import (
     APP_DESCRIPTION,
     APP_ICON,
@@ -23,6 +24,14 @@ st.session_state["snowflake_session"] = session
 # ── Header ───────────────────────────────────────────────────────────────────
 st.title(f"{APP_ICON} {APP_NAME}")
 st.subheader(APP_DESCRIPTION)
+
+# ── Dependency readiness checks ──────────────────────────────────────────────
+key_ok, key_error = validate_perplexity_key()
+if not key_ok and key_error:
+    st.warning(
+        "Perplexity API key is not configured. AI features (CV parsing, search, drafts) "
+        f"will be unavailable until fixed. Details: {key_error}"
+    )
 
 # ── Google Sign-in (built-in Streamlit auth) ─────────────────────────────────
 user_info = google_login()

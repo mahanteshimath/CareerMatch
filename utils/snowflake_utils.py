@@ -19,6 +19,8 @@ def init_snowflake() -> Session:
     session = get_snowflake_session()
     _create_stage(session)
     _create_tables(session)
+    _ensure_performance_objects(session)
+    _cleanup_expired_cache(session)
     return session
 
 
@@ -66,6 +68,7 @@ def _create_tables(session: Session) -> None:
             PROFESSOR_NAME  VARCHAR,
             PROFESSOR_EMAIL VARCHAR,
             SOURCE_URL      VARCHAR,
+            EMBEDDING       VECTOR(FLOAT, 768),
             CREATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
         """,
@@ -80,6 +83,7 @@ def _create_tables(session: Session) -> None:
             EXPERIENCE_LEVEL VARCHAR,
             SALARY_RANGE    VARCHAR,
             SOURCE_URL      VARCHAR,
+            EMBEDDING       VECTOR(FLOAT, 768),
             CREATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
         """,
@@ -118,3 +122,38 @@ def _create_tables(session: Session) -> None:
     ]
     for ddl in ddl_statements:
         session.sql(ddl).collect()
+
+
+def _ensure_performance_objects(session: Session) -> None:
+    """Ensure runtime schema has perf-critical columns and search optimization."""
+    session.sql(
+        "ALTER TABLE IITJ.MH.CM_POSITIONS "
+        "ADD COLUMN IF NOT EXISTS EMBEDDING VECTOR(FLOAT, 768)"
+    ).collect()
+    session.sql(
+        "ALTER TABLE IITJ.MH.CM_JOBS "
+        "ADD COLUMN IF NOT EXISTS EMBEDDING VECTOR(FLOAT, 768)"
+    ).collect()
+
+    optimization_statements = [
+        "ALTER TABLE IITJ.MH.CM_AGENT_CACHE "
+        "ADD SEARCH OPTIMIZATION ON EQUALITY(AGENT_NAME, QUERY_HASH)",
+        "ALTER TABLE IITJ.MH.CM_POSITIONS "
+        "ADD SEARCH OPTIMIZATION ON EQUALITY(POSITION_TYPE, CONTINENT, TITLE, UNIVERSITY)",
+        "ALTER TABLE IITJ.MH.CM_JOBS "
+        "ADD SEARCH OPTIMIZATION ON EQUALITY(TITLE, COMPANY)",
+    ]
+    for stmt in optimization_statements:
+        try:
+            session.sql(stmt).collect()
+        except Exception:
+            # Keep startup idempotent when optimization is already configured.
+            continue
+
+
+def _cleanup_expired_cache(session: Session) -> None:
+    """Delete expired cache rows to avoid unbounded table growth."""
+    session.sql(
+        "DELETE FROM IITJ.MH.CM_AGENT_CACHE "
+        "WHERE EXPIRES_AT IS NOT NULL AND EXPIRES_AT < CURRENT_TIMESTAMP()"
+    ).collect()

@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 
 import streamlit as st
 from snowflake.snowpark import Session
 
+from config.settings import CORTEX_EMBED_MODEL
 from agents.cv_parser import parse_cv
 from agents.position_researcher import search_positions
 from agents.job_researcher import search_jobs
 from agents.sop_writer import generate_sop, generate_email
 from agents.skill_analyzer import analyze_skill_gap
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_api_key() -> str:
@@ -87,8 +92,11 @@ def _check_cache(session: Session, agent_name: str, query: str) -> str | None:
         ).collect()
         if rows:
             return rows[0]["RESPONSE"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "cache_lookup_failed",
+            extra={"agent_name": agent_name, "error": str(exc)},
+        )
     return None
 
 
@@ -104,8 +112,20 @@ def _store_cache(
             "VALUES (?, ?, ?, ?)",
             params=[agent_name, key, response, expires.isoformat()],
         ).collect()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "cache_store_failed",
+            extra={"agent_name": agent_name, "error": str(exc)},
+        )
+
+
+def validate_perplexity_key() -> tuple[bool, str | None]:
+    """Validate that a Perplexity API key is configured and readable."""
+    try:
+        _get_api_key()
+        return True, None
+    except KeyError as exc:
+        return False, str(exc)
 
 
 def orchestrate_cv_parsing(session: Session, cv_text: str) -> dict:
@@ -250,7 +270,12 @@ def orchestrate_sop_generation(
         {"content": str} on success, or {"error": str}.
     """
     cv_summary = _build_cv_summary(cv_data)
-    return generate_sop(_get_api_key(), cv_summary, position_details, draft_type)
+    try:
+        api_key = _get_api_key()
+    except KeyError as e:
+        return {"error": str(e)}
+
+    return generate_sop(api_key, cv_summary, position_details, draft_type)
 
 
 def orchestrate_email_generation(
@@ -266,8 +291,13 @@ def orchestrate_email_generation(
         {"content": str} on success, or {"error": str}.
     """
     cv_summary = _build_cv_summary(cv_data)
+    try:
+        api_key = _get_api_key()
+    except KeyError as e:
+        return {"error": str(e)}
+
     return generate_email(
-        _get_api_key(), cv_summary, position_title, university, professor_name
+        api_key, cv_summary, position_title, university, professor_name
     )
 
 
@@ -283,8 +313,13 @@ def orchestrate_skill_analysis(
         Skill gap dict on success, or {"error": str}.
     """
     candidate_skills = cv_data.get("skills", [])
+    try:
+        api_key = _get_api_key()
+    except KeyError as e:
+        return {"error": str(e)}
+
     return analyze_skill_gap(
-        _get_api_key(), candidate_skills, job_description, job_required_skills
+        api_key, candidate_skills, job_description, job_required_skills
     )
 
 
@@ -334,8 +369,9 @@ def _upsert_position(session: Session, pos: dict) -> None:
         session.sql(
             "INSERT INTO IITJ.MH.CM_POSITIONS "
             "(TITLE, UNIVERSITY, COUNTRY, CONTINENT, POSITION_TYPE, DEADLINE, "
-            "DESCRIPTION, REQUIREMENTS, PROFESSOR_NAME, PROFESSOR_EMAIL, SOURCE_URL) "
-            "VALUES (?, ?, ?, ?, ?, TRY_TO_DATE(?), ?, ?, ?, ?, ?)",
+            "DESCRIPTION, REQUIREMENTS, PROFESSOR_NAME, PROFESSOR_EMAIL, SOURCE_URL, EMBEDDING) "
+            "VALUES (?, ?, ?, ?, ?, TRY_TO_DATE(?), ?, ?, ?, ?, ?, "
+            "SNOWFLAKE.CORTEX.EMBED_TEXT_768(?, ?))",
             params=[
                 title,
                 university,
@@ -348,9 +384,23 @@ def _upsert_position(session: Session, pos: dict) -> None:
                 pos.get("professor_name", ""),
                 pos.get("professor_email", ""),
                 pos.get("source_url", ""),
+                CORTEX_EMBED_MODEL,
+                (
+                    f"{title}\n"
+                    f"{pos.get('description', '')}\n"
+                    f"{pos.get('requirements', '')}"
+                )[:8000],
             ],
         ).collect()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "position_upsert_failed",
+            extra={
+                "title": title,
+                "university": university,
+                "error": str(exc),
+            },
+        )
         # DB persistence should not block showing AI results in UI.
         return
 
@@ -377,8 +427,8 @@ def _upsert_job(session: Session, job: dict) -> None:
         session.sql(
             "INSERT INTO IITJ.MH.CM_JOBS "
             "(TITLE, COMPANY, LOCATION, DESCRIPTION, REQUIRED_SKILLS, "
-            "EXPERIENCE_LEVEL, SALARY_RANGE, SOURCE_URL) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "EXPERIENCE_LEVEL, SALARY_RANGE, SOURCE_URL, EMBEDDING) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, SNOWFLAKE.CORTEX.EMBED_TEXT_768(?, ?))",
             params=[
                 title,
                 company,
@@ -388,8 +438,18 @@ def _upsert_job(session: Session, job: dict) -> None:
                 job.get("experience_level", ""),
                 job.get("salary_range", ""),
                 job.get("source_url", ""),
+                CORTEX_EMBED_MODEL,
+                (
+                    f"{title}\n"
+                    f"{job.get('description', '')}\n"
+                    f"Required skills: {required_skills}"
+                )[:8000],
             ],
         ).collect()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "job_upsert_failed",
+            extra={"title": title, "company": company, "error": str(exc)},
+        )
         # DB persistence should not block showing AI results in UI.
         return
