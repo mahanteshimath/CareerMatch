@@ -74,9 +74,13 @@ with tab_ai:
             elif isinstance(result, list):
                 st.session_state["ai_jobs"] = result
                 st.session_state["ai_jobs_citations"] = []
+                if not result:
+                    st.warning("No jobs were returned from cache. Retrying should fetch fresh results.")
             else:
                 st.session_state["ai_jobs"] = result.get("jobs", [])
                 st.session_state["ai_jobs_citations"] = result.get("citations", [])
+                if not st.session_state["ai_jobs"]:
+                    st.info("No matching jobs found right now. Try again or refine your CV/profile details.")
 
     if st.session_state.get("ai_jobs"):
         results = st.session_state["ai_jobs"]

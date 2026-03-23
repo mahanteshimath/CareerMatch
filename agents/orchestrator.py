@@ -159,8 +159,20 @@ def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
         try:
             data = json.loads(cached)
             if isinstance(data, list):
-                return {"jobs": data, "citations": []}
-            return data
+                # Legacy cache shape: bare list. Treat empty list as stale cache.
+                if data:
+                    return {"jobs": data, "citations": []}
+                data = None
+            # Current cache shape: {"jobs": [...], "citations": [...]}.
+            if isinstance(data, dict) and "jobs" in data:
+                jobs = data.get("jobs", [])
+                if isinstance(jobs, list) and jobs:
+                    return data
+                # Empty cached jobs should not block a fresh AI search.
+                data = None
+
+            if data:
+                return data
         except json.JSONDecodeError:
             pass
 
@@ -180,7 +192,9 @@ def orchestrate_job_search(session: Session, cv_data: dict) -> dict:
     for job in result.get("jobs", []):
         _upsert_job(session, job)
 
-    _store_cache(session, "job_researcher", cache_query, json.dumps(result))
+    # Avoid persisting empty payloads; they cause confusing UX on cache hits.
+    if result.get("jobs"):
+        _store_cache(session, "job_researcher", cache_query, json.dumps(result))
     return result
 
 
