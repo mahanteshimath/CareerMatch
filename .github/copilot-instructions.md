@@ -1,8 +1,8 @@
-# CareerMatch
+# CareerMatch — Project Guidelines
 
-AI-powered CV-to-opportunity matching platform.
+## Overview
 
-## Two Personas
+CareerMatch is a SaaS AI-powered CV-to-opportunity matching platform built with **Streamlit + Snowflake + LangChain + Perplexity Sonar**. Two personas:
 
 - **Student**: Upload CV → filter (Masters/PhD/Postdoc, continent, open deadlines) → match university positions → generate SOP/email drafts
 - **Job Seeker**: Upload CV → NLP extraction → semantic match against job descriptions → similarity scores → highlight missing skills
@@ -18,20 +18,7 @@ AI-powered CV-to-opportunity matching platform.
 | Embeddings | Snowflake Cortex `EMBED_TEXT` for semantic matching |
 | CV Parsing | LangChain agent + Perplexity for structured extraction |
 
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure secrets (copy template and fill in your credentials)
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-
-# Run the app
-streamlit run Home.py
-```
-
-## Project Structure
+## Architecture
 
 ```
 Home.py                          # Entry point: Google auth, Snowflake init, persona routing
@@ -57,30 +44,59 @@ utils/
 config/
   settings.py                    # App configuration constants
   schema.sql                     # Snowflake DDL (reference only; auto-created at runtime)
-tests/                           # Pytest test suite
 ```
 
-## Setup
+## Code Style
 
-### Prerequisites
+- **Python 3.11+**, type hints on all function signatures
+- Follow PEP 8; use `ruff` for linting
+- Streamlit pages: prefix with numeric order (`01_`, `02_`, etc.)
+- Use `st.cache_data` / `st.cache_resource` for expensive operations
+- Never hardcode credentials — use `.streamlit/secrets.toml` (gitignored) or env vars
 
-- Python 3.11+
-- Snowflake account with Cortex AI enabled
-- Google Cloud project with OAuth 2.0 credentials
-- Perplexity API key
-
-### 1. Configure Secrets
-
-Create `.streamlit/secrets.toml` with your credentials (see `.streamlit/secrets.toml.example` for template).
-
-### 2. Run Locally
+## Build and Test
 
 ```bash
+# Install
+pip install -r requirements.txt
+
+# Run locally
 streamlit run Home.py
+
+# Lint
+ruff check .
+
+# Test
+pytest tests/ -v
 ```
 
-On first launch, the app automatically creates the Snowflake stage and tables.
+## Snowflake Conventions
 
-## License
+- All tables auto-created on first run (like reference repos)
+- Schema: `IITJ.MH` — all objects live here
+- CVs stored in Snowflake Stage (`CAREERMATCH_STAGE`, SSE-encrypted)
+- Use `snowflake-snowpark-python` for Snowflake interaction
+- Connection via `st.connection("snowflake")` with `secrets.toml` fallback
 
-Apache-2.0
+## LangChain Agent Conventions
+
+- Agents live in `agents/` directory, one file per agent
+- Use `ChatPerplexity` (model: `sonar`) as the LLM
+- Each agent has a clear system prompt defining its role
+- Orchestrator chains agents; never call Perplexity directly from pages
+- Cache agent results in Snowflake to avoid redundant API calls
+
+## Security
+
+- **NEVER** commit `.streamlit/secrets.toml` — it's in `.gitignore`
+- Google OAuth client secrets go in secrets.toml, not source code
+- Validate all user input before passing to SQL or agents
+- Use parameterized queries — never string-interpolate SQL
+- Sanitize uploaded file names (timestamp prefix, like reference repos)
+
+## Key Patterns from Reference Repos
+
+- **Auto-schema migration**: Tables/stages created automatically on first run (`utils/snowflake_utils.py`)
+- **Multi-page Streamlit**: `Home.py` as entry + `pages/` directory
+- **Secrets management**: `.streamlit/secrets.toml` locally, Streamlit Cloud secrets in production
+- **File staging**: Upload to Snowflake stage with Unix timestamp prefix to prevent collisions
