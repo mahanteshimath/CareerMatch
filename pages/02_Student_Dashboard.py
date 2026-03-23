@@ -7,7 +7,7 @@ import json
 import streamlit as st
 
 from agents.orchestrator import orchestrate_position_search
-from config.settings import APPLICATION_TYPES, CONTINENTS
+from config.settings import APPLICATION_TYPES, CONTINENTS, CORTEX_EMBED_MODEL
 from utils.matching import match_positions
 from utils.ui_components import (
     clear_session_prefixes,
@@ -30,6 +30,82 @@ def _coerce_parsed_json(value: object) -> dict | None:
         except json.JSONDecodeError:
             return None
     return None
+
+
+def _save_ai_positions_to_snowflake(
+    session,
+    user_id: int,
+    cv_id: int,
+    positions: list[dict],
+) -> tuple[int, int]:
+    """Persist AI position results and record them into CM_MATCHES history."""
+    saved_positions = 0
+    saved_matches = 0
+
+    for pos in positions:
+        title = str(pos.get("title", "")).strip()
+        university = str(pos.get("university", "")).strip()
+        if not title or not university:
+            continue
+
+        existing = session.sql(
+            "SELECT POS_ID FROM IITJ.MH.CM_POSITIONS WHERE TITLE = ? AND UNIVERSITY = ?",
+            params=[title, university],
+        ).collect()
+
+        if existing:
+            pos_id = int(existing[0]["POS_ID"])
+        else:
+            session.sql(
+                "INSERT INTO IITJ.MH.CM_POSITIONS "
+                "(TITLE, UNIVERSITY, COUNTRY, CONTINENT, POSITION_TYPE, DEADLINE, "
+                "DESCRIPTION, REQUIREMENTS, PROFESSOR_NAME, PROFESSOR_EMAIL, SOURCE_URL, EMBEDDING) "
+                "SELECT ?, ?, ?, ?, ?, TRY_TO_DATE(?), ?, ?, ?, ?, ?, "
+                "SNOWFLAKE.CORTEX.EMBED_TEXT_768(?, ?)",
+                params=[
+                    title,
+                    university,
+                    str(pos.get("country", "")),
+                    str(pos.get("continent", "")),
+                    str(pos.get("position_type", "")),
+                    str(pos.get("deadline", "")),
+                    str(pos.get("description", "")),
+                    str(pos.get("requirements", "")),
+                    str(pos.get("professor_name", "")),
+                    str(pos.get("professor_email", "")),
+                    str(pos.get("source_url", "")),
+                    CORTEX_EMBED_MODEL,
+                    (
+                        f"{title}\n"
+                        f"{pos.get('description', '')}\n"
+                        f"{pos.get('requirements', '')}"
+                    )[:8000],
+                ],
+            ).collect()
+
+            lookup = session.sql(
+                "SELECT POS_ID FROM IITJ.MH.CM_POSITIONS WHERE TITLE = ? AND UNIVERSITY = ?",
+                params=[title, university],
+            ).collect()
+            if not lookup:
+                continue
+            pos_id = int(lookup[0]["POS_ID"])
+            saved_positions += 1
+
+        inserted = session.sql(
+            "INSERT INTO IITJ.MH.CM_MATCHES "
+            "(USER_ID, CV_ID, TARGET_TYPE, TARGET_ID, SIMILARITY_SCORE, MISSING_SKILLS) "
+            "SELECT ?, ?, 'position', ?, NULL, NULL "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM IITJ.MH.CM_MATCHES "
+            "  WHERE USER_ID = ? AND CV_ID = ? AND TARGET_TYPE = 'position' AND TARGET_ID = ?"
+            ")",
+            params=[user_id, cv_id, pos_id, user_id, cv_id, pos_id],
+        ).collect()
+        if inserted:
+            saved_matches += 1
+
+    return saved_positions, saved_matches
 
 page_header("Student Dashboard")
 user_info = require_auth()
@@ -122,6 +198,31 @@ with tab_ai:
     if st.session_state.get("ai_positions"):
         results = st.session_state["ai_positions"]
         st.success(f"Found **{len(results)}** positions!")
+
+        if user_id:
+            if st.button("💾 Save AI Positions to Snowflake", key="save_ai_positions_to_db"):
+                if not selected_cv_id:
+                    st.warning(
+                        "Please select a previously uploaded CV from the dropdown to save match history. "
+                        "Current session CV may not yet be linked to a CV_ID."
+                    )
+                else:
+                    with st.spinner("Saving positions and match history to Snowflake..."):
+                        try:
+                            saved_positions, saved_matches = _save_ai_positions_to_snowflake(
+                                session,
+                                user_id,
+                                selected_cv_id,
+                                results,
+                            )
+                            st.success(
+                                "Saved to Snowflake. "
+                                f"New positions inserted: {saved_positions}, new matches recorded: {saved_matches}."
+                            )
+                        except Exception as exc:
+                            st.error(f"Failed to save AI positions: {exc}")
+        else:
+            st.info("User ID not found. Please sign in again to save positions.")
 
         for i, pos in enumerate(results):
             with st.expander(
