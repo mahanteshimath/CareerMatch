@@ -22,13 +22,29 @@ def _get_api_key() -> str:
 
     Supports multiple key layouts to avoid runtime breakage across deployments.
     """
+    def _normalize(value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip().strip('"').strip("'")
+        return text or None
+
     # Preferred nested layout: [api_keys] perplexity = "..."
     try:
-        api_keys = st.secrets.get("api_keys", {})
-        if isinstance(api_keys, dict):
-            key = api_keys.get("perplexity")
-            if key:
-                return str(key)
+        api_keys = st.secrets.get("api_keys")
+        if api_keys is not None:
+            key = None
+            # Works for dict-like secret sections.
+            if hasattr(api_keys, "get"):
+                key = api_keys.get("perplexity")
+            # Works for Streamlit section objects supporting index access.
+            if not key:
+                try:
+                    key = api_keys["perplexity"]
+                except Exception:
+                    pass
+            normalized = _normalize(key)
+            if normalized:
+                return normalized
     except Exception:
         pass
 
@@ -36,16 +52,17 @@ def _get_api_key() -> str:
     for secret_name in ("PERPLEXITY_API_KEY", "perplexity_api_key", "perplexity"):
         try:
             value = st.secrets.get(secret_name)
-            if value:
-                return str(value)
+            normalized = _normalize(value)
+            if normalized:
+                return normalized
         except Exception:
             continue
 
     # Environment fallback for local/dev execution.
     for env_name in ("PERPLEXITY_API_KEY", "PPLX_API_KEY", "PERPLEXITY_KEY"):
-        value = os.getenv(env_name)
-        if value:
-            return value
+        normalized = _normalize(os.getenv(env_name))
+        if normalized:
+            return normalized
 
     raise KeyError(
         "Perplexity API key not found. Configure one of: "
