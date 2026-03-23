@@ -130,7 +130,19 @@ def _jobs_from_citations(citations: list[str]) -> list[dict[str, Any]]:
     return jobs
 
 
-def search_jobs(api_key: str, cv_summary: str) -> dict:
+def _build_job_user_prompt(cv_summary: str, custom_instructions: str = "") -> str:
+    """Build the user prompt with optional caller-provided constraints."""
+    prompt_parts = [
+        f"Candidate Profile:\n{cv_summary}",
+        "Find matching job listings that are currently open.",
+    ]
+    instruction_text = custom_instructions.strip()
+    if instruction_text:
+        prompt_parts.insert(1, f"Custom instructions: {instruction_text}")
+    return "\n\n".join(prompt_parts)
+
+
+def search_jobs(api_key: str, cv_summary: str, custom_instructions: str = "") -> dict:
     """Search for job listings matching the candidate's profile.
 
     Returns:
@@ -139,7 +151,7 @@ def search_jobs(api_key: str, cv_summary: str) -> dict:
     result = call_perplexity(
         api_key,
         JOB_RESEARCHER_SYSTEM_PROMPT,
-        f"Candidate Profile:\n{cv_summary}\n\nFind matching job listings that are currently open.",
+        _build_job_user_prompt(cv_summary, custom_instructions),
         web_search_options={"search_context_size": "high"},
     )
     if "error" in result:
@@ -169,7 +181,7 @@ def search_jobs(api_key: str, cv_summary: str) -> dict:
         retry = call_perplexity(
             api_key,
             JOB_RESEARCHER_RELAXED_SYSTEM_PROMPT,
-            f"Candidate Profile:\n{cv_summary}\n\nFind 5-10 currently open matching jobs.",
+            _build_job_user_prompt(cv_summary, custom_instructions),
             web_search_options={"search_context_size": "high"},
         )
         if "error" not in retry:

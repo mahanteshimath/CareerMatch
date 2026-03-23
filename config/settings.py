@@ -17,7 +17,7 @@ APPLICATION_TYPES = ["Masters", "PhD", "Postdoc"]
 CONTINENTS = ["USA", "Europe/UK", "India", "Asia", "Australia", "Canada"]
 
 # Perplexity
-PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar")
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-deep-research")
 PERPLEXITY_API_URL = os.getenv(
 	"PERPLEXITY_API_URL",
 	"https://api.perplexity.ai/chat/completions",

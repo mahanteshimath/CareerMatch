@@ -74,12 +74,27 @@ with tab_ai:
     st.caption(
         "Uses Perplexity Sonar to research real job listings matching your profile."
     )
+    custom_instructions = st.text_area(
+        "Optional custom instructions",
+        placeholder="Example: Search all jobs in Bengaluru only.",
+        height=90,
+        key="job_search_custom_instructions",
+        help=(
+            "Use this to constrain search scope, such as location, role type, "
+            "or work mode."
+        ),
+    )
+
     if st.button("🔍 Search Jobs with AI", type="primary", key="ai_job_search"):
         clear_session_prefixes(("skill_analysis_", "db_skill_analysis_"))
         st.session_state.pop("ai_jobs", None)
         st.session_state.pop("ai_jobs_citations", None)
         with st.spinner("AI is searching the job market... This may take 30-60 seconds."):
-            result = orchestrate_job_search(session, cv_data)
+            result = orchestrate_job_search(
+                session,
+                cv_data,
+                custom_instructions=custom_instructions,
+            )
             if isinstance(result, dict) and "error" in result:
                 st.error(f"Job search failed: {result['error']}")
             elif isinstance(result, list):
