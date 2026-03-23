@@ -142,15 +142,36 @@ def orchestrate_position_search(
         try:
             data = json.loads(cached)
             if isinstance(data, list):
-                return {"positions": data, "citations": []}
-            return data
+                # Legacy cache shape: bare list. Treat empty list as stale cache.
+                if data:
+                    return {"positions": data, "citations": []}
+                data = None
+            # Current cache shape: {"positions": [...], "citations": [...]}.
+            if isinstance(data, dict) and "positions" in data:
+                positions = data.get("positions", [])
+                if isinstance(positions, list) and positions:
+                    return data
+                # Empty cached positions should not block a fresh AI search.
+                data = None
+
+            if data:
+                return data
         except json.JSONDecodeError:
             pass
 
     current_date = datetime.utcnow().strftime("%Y-%m-%d")
-    result = search_positions(
-        _get_api_key(), cv_summary, position_type, continent, current_date
-    )
+    try:
+        api_key = _get_api_key()
+    except KeyError as e:
+        return {"error": str(e)}
+
+    try:
+        result = search_positions(
+            api_key, cv_summary, position_type, continent, current_date
+        )
+    except Exception as e:
+        return {"error": f"Unexpected error during position search: {e}"}
+
     if "error" in result:
         return result
 
@@ -158,7 +179,9 @@ def orchestrate_position_search(
     for pos in result.get("positions", []):
         _upsert_position(session, pos)
 
-    _store_cache(session, "position_researcher", cache_query, json.dumps(result))
+    # Avoid persisting empty payloads; they cause confusing UX on cache hits.
+    if result.get("positions"):
+        _store_cache(session, "position_researcher", cache_query, json.dumps(result))
     return result
 
 

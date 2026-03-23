@@ -50,9 +50,13 @@ with tab_ai:
             elif isinstance(result, list):
                 st.session_state["ai_positions"] = result
                 st.session_state["ai_positions_citations"] = []
+                if not result:
+                    st.warning("No positions were returned from cache. Retrying should fetch fresh results.")
             else:
                 st.session_state["ai_positions"] = result.get("positions", [])
                 st.session_state["ai_positions_citations"] = result.get("citations", [])
+                if not st.session_state["ai_positions"]:
+                    st.info("No matching positions found right now. Try again or adjust filters.")
 
     if st.session_state.get("ai_positions"):
         results = st.session_state["ai_positions"]
