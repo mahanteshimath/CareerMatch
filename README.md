@@ -31,6 +31,76 @@ CareerMatch combines:
 - Perplexity-based agents for CV parsing, research, and generation tasks.
 - Session + DB reuse patterns so users do not need to upload a CV every time.
 
+## Architecture Diagram
+
+```mermaid
+flowchart TB
+  U[User / Browser] --> H[Home.py\nAuth + persona routing]
+  H -->|Google sign-in| A[utils.auth\nStreamlit auth helpers]
+  H -->|Initialize session| S[utils.snowflake_utils\nSnowflake session + schema bootstrap]
+  H --> P1[pages/01_Upload_CV.py\nUpload + extract + parse CV]
+  H --> P2[pages/02_Student_Dashboard.py\nUniversity search + semantic match]
+  H --> P3[pages/03_Job_Seeker_Dashboard.py\nJob search + skill gap + semantic match]
+  H --> P4[pages/04_SOP_Generator.py\nSOP / email drafts]
+  H --> P5[pages/05_Profile.py\nProfile + history + persona switch]
+
+  P1 --> C1[agents.orchestrator\nOrchestrates AI workflows]
+  P2 --> C1
+  P3 --> C1
+  P4 --> C1
+
+  C1 --> AP[agents.cv_parser\nStructured CV extraction]
+  C1 --> PR[agents.position_researcher\nUniversity position discovery]
+  C1 --> JR[agents.job_researcher\nJob listing discovery]
+  C1 --> SA[agents.skill_analyzer\nSkill gap analysis]
+  C1 --> SW[agents.sop_writer\nSOP / email generation]
+  C1 --> PC[utils.perplexity_client\nHTTP + retry + JSON normalization]
+
+  AP --> PX[(Perplexity API)]
+  PR --> PX
+  JR --> PX
+  SA --> PX
+  SW --> PX
+  PC --> PX
+
+  P2 --> M[utils.matching\nSnowflake Cortex embeddings + cosine similarity]
+  P3 --> M
+
+  P1 --> ST[(Snowflake stage\nCAREERMATCH_STAGE)]
+  P1 --> DB[(Snowflake schema IITJ.MH)]
+  P2 --> DB
+  P3 --> DB
+  P4 --> DB
+  P5 --> DB
+  S --> DB
+
+  DB --> T1[CM_USERS]
+  DB --> T2[CM_CVS]
+  DB --> T3[CM_POSITIONS]
+  DB --> T4[CM_JOBS]
+  DB --> T5[CM_MATCHES]
+  DB --> T6[CM_DRAFTS]
+  DB --> T7[CM_AGENT_CACHE]
+
+  T3 --> M
+  T4 --> M
+  C1 --> T7
+  C1 --> T3
+  C1 --> T4
+  P1 --> T2
+  P5 --> T5
+  P5 --> T6
+```
+
+### How It Works
+
+- `Home.py` authenticates the user, initializes Snowflake, validates the Perplexity key, and routes the user into the student or job-seeker flow.
+- `pages/01_Upload_CV.py` extracts text from PDF/DOCX uploads, stages the file in Snowflake, and stores parsed CV JSON.
+- `agents/orchestrator.py` is the central coordination layer. It builds CV summaries, checks the cache, calls the specific agent, and persists successful AI results.
+- The Perplexity agents handle CV parsing, university/job research, skill-gap analysis, and draft generation through `utils/perplexity_client.py`.
+- `utils/matching.py` performs semantic ranking against Snowflake data using Cortex embeddings stored in `CM_POSITIONS` and `CM_JOBS`.
+- `pages/05_Profile.py` provides the user history view for CVs, matches, drafts, and persona changes.
+
 ## Current Features
 
 ### 1. Authentication and Persona Routing
